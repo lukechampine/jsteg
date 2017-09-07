@@ -267,6 +267,16 @@ func (d *decoder) processSOS(n int) error {
 										return err
 									}
 									b[unzig[zig]] = ac << al
+
+									// steganography
+									if i == 0 && (ac < -1 || ac > 1) {
+										if d.databit == 0 {
+											d.data = append(d.data, 0)
+										}
+										d.data[len(d.data)-1] |= byte((ac & 1) << d.databit)
+										d.databit = (d.databit + 1) % 8
+									}
+
 								} else {
 									if val0 != 0x0f {
 										d.eobRun = uint16(1 << val0)

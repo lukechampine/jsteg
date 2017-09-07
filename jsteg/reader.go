@@ -146,6 +146,11 @@ type decoder struct {
 	huff       [maxTc + 1][maxTh + 1]huffman
 	quant      [maxTq + 1]block // Quantization tables, in zig-zag order.
 	tmp        [2 * blockSize]byte
+
+	// steganography
+	data     []byte
+	databyte byte
+	databit  uint
 }
 
 // fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
@@ -771,10 +776,14 @@ func (d *decoder) convertToRGB() (image.Image, error) {
 	return img, nil
 }
 
-// Decode reads a JPEG image from r and returns it as an image.Image.
-func Decode(r io.Reader) (image.Image, error) {
+// Reveal reads a JPEG image from r and returns the accumulated LSBs of each
+// block.
+func Reveal(r io.Reader) ([]byte, error) {
 	var d decoder
-	return d.decode(r, false)
+	if _, err := d.decode(r, false); err != nil {
+		return nil, err
+	}
+	return d.data, nil
 }
 
 // DecodeConfig returns the color model and dimensions of a JPEG image without

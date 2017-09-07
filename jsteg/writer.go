@@ -226,6 +226,9 @@ type encoder struct {
 	bits, nBits uint32
 	// quant is the scaled quantization tables, in zig-zag order.
 	quant [nQuantIndex][blockSize]byte
+	// steganography
+	data    []byte
+	databit uint
 }
 
 func (e *encoder) flush() {
@@ -368,6 +371,24 @@ func (e *encoder) writeBlock(b *block, q quantIndex, prevDC int32) int32 {
 	h, runLength := huffIndex(2*q+1), int32(0)
 	for zig := 1; zig < blockSize; zig++ {
 		ac := div(b[unzig[zig]], 8*int32(e.quant[q][zig]))
+		// steganography
+		if len(e.data) > 0 && q == 0 && (ac < -1 || ac > 1) {
+			neg := ac < 0
+			if neg {
+				ac = -ac
+			}
+			// set LSB of ac using clear + or
+			ac = (ac &^ 1) | int32(e.data[0]>>e.databit)&1
+			if neg {
+				ac = -ac
+			}
+
+			// increment bit counter
+			if e.databit++; e.databit == 8 {
+				e.data = e.data[1:]
+				e.databit = 0
+			}
+		}
 		if ac == 0 {
 			runLength++
 		} else {
@@ -570,14 +591,16 @@ type Options struct {
 	Quality int
 }
 
-// Encode writes the Image m to w in JPEG 4:2:0 baseline format with the given
-// options. Default parameters are used if a nil *Options is passed.
-func Encode(w io.Writer, m image.Image, o *Options) error {
+// Hide writes the Image m to w in JPEG 4:2:0 baseline format with the given
+// options, hiding the bits of data in the LSB of each block. Default
+// parameters are used if a nil *Options is passed.
+func Hide(w io.Writer, m image.Image, data []byte, o *Options) error {
 	b := m.Bounds()
 	if b.Dx() >= 1<<16 || b.Dy() >= 1<<16 {
 		return errors.New("jpeg: image is too large to encode")
 	}
 	var e encoder
+	e.data = data
 	if ww, ok := w.(writer); ok {
 		e.w = ww
 	} else {
