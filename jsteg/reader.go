@@ -66,13 +66,6 @@ const (
 	app15Marker = 0xef
 )
 
-// See http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/JPEG.html#Adobe
-const (
-	adobeTransformUnknown = 0
-	adobeTransformYCbCr   = 1
-	adobeTransformYCbCrK  = 2
-)
-
 // unzig maps from the zig-zag ordering to the natural ordering. For example,
 // unzig[3] is the column and row of the fourth element in zig-zag order. The
 // value is 16, which means first column (16%8 == 0) and third row (16/8 == 2).
@@ -521,8 +514,9 @@ func (d *decoder) processApp14Marker(n int) error {
 	return nil
 }
 
-// decode reads a JPEG image from r and returns it as an image.Image.
-func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
+// decode reads a JPEG image from r and returns the accumulated LSBs of each
+// block.
+func (d *decoder) decode(r io.Reader, configOnly bool) ([]byte, error) {
 	d.r = r
 
 	// Check for the Start Of Image marker.
@@ -652,14 +646,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 			return nil, err
 		}
 	}
-
-	if d.img1 != nil {
-		return d.img1, nil
-	}
-	if d.img3 != nil {
-		return d.img3, nil
-	}
-	return nil, FormatError("missing SOS marker")
+	return d.data, nil
 }
 
 // Reveal reads a JPEG image from r and returns the accumulated LSBs of each

@@ -4,70 +4,9 @@
 
 package jsteg
 
-import (
-	"image"
-)
-
 const blockSize = 64 // A DCT block is 8x8.
 
 type block [blockSize]int32
-
-const (
-	w1 = 2841 // 2048*sqrt(2)*cos(1*pi/16)
-	w2 = 2676 // 2048*sqrt(2)*cos(2*pi/16)
-	w3 = 2408 // 2048*sqrt(2)*cos(3*pi/16)
-	w5 = 1609 // 2048*sqrt(2)*cos(5*pi/16)
-	w6 = 1108 // 2048*sqrt(2)*cos(6*pi/16)
-	w7 = 565  // 2048*sqrt(2)*cos(7*pi/16)
-
-	w1pw7 = w1 + w7
-	w1mw7 = w1 - w7
-	w2pw6 = w2 + w6
-	w2mw6 = w2 - w6
-	w3pw5 = w3 + w5
-	w3mw5 = w3 - w5
-
-	r2 = 181 // 256/sqrt(2)
-)
-
-// makeImg allocates and initializes the destination image.
-func (d *decoder) makeImg(mxx, myy int) {
-	if d.nComp == 1 {
-		m := image.NewGray(image.Rect(0, 0, 8*mxx, 8*myy))
-		d.img1 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.Gray)
-		return
-	}
-
-	h0 := d.comp[0].h
-	v0 := d.comp[0].v
-	hRatio := h0 / d.comp[1].h
-	vRatio := v0 / d.comp[1].v
-	var subsampleRatio image.YCbCrSubsampleRatio
-	switch hRatio<<4 | vRatio {
-	case 0x11:
-		subsampleRatio = image.YCbCrSubsampleRatio444
-	case 0x12:
-		subsampleRatio = image.YCbCrSubsampleRatio440
-	case 0x21:
-		subsampleRatio = image.YCbCrSubsampleRatio422
-	case 0x22:
-		subsampleRatio = image.YCbCrSubsampleRatio420
-	case 0x41:
-		subsampleRatio = image.YCbCrSubsampleRatio411
-	case 0x42:
-		subsampleRatio = image.YCbCrSubsampleRatio410
-	default:
-		panic("unreachable")
-	}
-	m := image.NewYCbCr(image.Rect(0, 0, 8*h0*mxx, 8*v0*myy), subsampleRatio)
-	d.img3 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.YCbCr)
-
-	if d.nComp == 4 {
-		h3, v3 := d.comp[3].h, d.comp[3].v
-		d.blackPix = make([]byte, 8*h3*mxx*8*v3*myy)
-		d.blackStride = 8 * h3 * mxx
-	}
-}
 
 // Specified in section B.2.3.
 func (d *decoder) processSOS(n int) error {
@@ -134,21 +73,9 @@ func (d *decoder) processSOS(n int) error {
 	h0, v0 := d.comp[0].h, d.comp[0].v // The h and v values from the Y components.
 	mxx := (d.width + 8*h0 - 1) / (8 * h0)
 	myy := (d.height + 8*v0 - 1) / (8 * v0)
-	if d.img1 == nil && d.img3 == nil {
-		d.makeImg(mxx, myy)
-	}
 
 	d.bits = bits{}
 	mcu, expectedRST := 0, uint8(rst0Marker)
-	var (
-		// b is the decoded coefficients, in natural (not zig-zag) order.
-		b  block
-		dc [maxComponents]int32
-		// bx and by are the location of the current block, in units of 8x8
-		// blocks: the third block in the first row has (bx, by) = (2, 0).
-		bx, by     int
-		blockCount int
-	)
 	for my := 0; my < myy; my++ {
 		for mx := 0; mx < mxx; mx++ {
 			for i := 0; i < nComp; i++ {
@@ -156,27 +83,6 @@ func (d *decoder) processSOS(n int) error {
 				hi := d.comp[compIndex].h
 				vi := d.comp[compIndex].v
 				for j := 0; j < hi*vi; j++ {
-					// The blocks are traversed one MCU at a time. For 4:2:0 chroma
-					// subsampling, there are four Y 8x8 blocks in every 16x16 MCU.
-					//
-					// For a sequential 32x16 pixel image, the Y blocks visiting order is:
-					//	0 1 4 5
-					//	2 3 6 7
-					if nComp != 1 {
-						bx = hi*mx + j%hi
-						by = vi*my + j/hi
-					} else {
-						q := mxx * hi
-						bx = blockCount % q
-						by = blockCount / q
-						blockCount++
-						if bx*8 >= d.width || by*8 >= d.height {
-							continue
-						}
-					}
-
-					b = block{}
-
 					// Decode the DC coefficient, as specified in section F.2.2.1.
 					value, err := d.decodeHuffman(&d.huff[dcTable][scan[i].td])
 					if err != nil {
@@ -185,12 +91,9 @@ func (d *decoder) processSOS(n int) error {
 					if value > 16 {
 						return UnsupportedError("excessive DC component")
 					}
-					dcDelta, err := d.receiveExtend(value)
-					if err != nil {
+					if _, err = d.receiveExtend(value); err != nil {
 						return err
 					}
-					dc[compIndex] += dcDelta
-					b[0] = dc[compIndex]
 
 					// Decode the AC coefficients, as specified in section F.2.2.2.
 					huff := &d.huff[acTable][scan[i].ta]
@@ -210,7 +113,6 @@ func (d *decoder) processSOS(n int) error {
 							if err != nil {
 								return err
 							}
-							b[unzig[zig]] = ac
 
 							// steganography
 							if i == 0 && (ac < -1 || ac > 1) {
@@ -246,8 +148,6 @@ func (d *decoder) processSOS(n int) error {
 				}
 				// Reset the Huffman decoder.
 				d.bits = bits{}
-				// Reset the DC components, as per section F.2.1.3.1.
-				dc = [maxComponents]int32{}
 			}
 		} // for mx
 	} // for my
