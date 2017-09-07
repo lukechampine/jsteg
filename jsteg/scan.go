@@ -8,6 +8,28 @@ import (
 	"image"
 )
 
+const blockSize = 64 // A DCT block is 8x8.
+
+type block [blockSize]int32
+
+const (
+	w1 = 2841 // 2048*sqrt(2)*cos(1*pi/16)
+	w2 = 2676 // 2048*sqrt(2)*cos(2*pi/16)
+	w3 = 2408 // 2048*sqrt(2)*cos(3*pi/16)
+	w5 = 1609 // 2048*sqrt(2)*cos(5*pi/16)
+	w6 = 1108 // 2048*sqrt(2)*cos(6*pi/16)
+	w7 = 565  // 2048*sqrt(2)*cos(7*pi/16)
+
+	w1pw7 = w1 + w7
+	w1mw7 = w1 - w7
+	w2pw6 = w2 + w6
+	w2mw6 = w2 - w6
+	w3pw5 = w3 + w5
+	w3mw5 = w3 - w5
+
+	r2 = 181 // 256/sqrt(2)
+)
+
 // makeImg allocates and initializes the destination image.
 func (d *decoder) makeImg(mxx, myy int) {
 	if d.nComp == 1 {
@@ -108,54 +130,12 @@ func (d *decoder) processSOS(n int) error {
 		return FormatError("total sampling factors too large")
 	}
 
-	// zigStart and zigEnd are the spectral selection bounds.
-	// ah and al are the successive approximation high and low values.
-	// The spec calls these values Ss, Se, Ah and Al.
-	//
-	// For progressive JPEGs, these are the two more-or-less independent
-	// aspects of progression. Spectral selection progression is when not
-	// all of a block's 64 DCT coefficients are transmitted in one pass.
-	// For example, three passes could transmit coefficient 0 (the DC
-	// component), coefficients 1-5, and coefficients 6-63, in zig-zag
-	// order. Successive approximation is when not all of the bits of a
-	// band of coefficients are transmitted in one pass. For example,
-	// three passes could transmit the 6 most significant bits, followed
-	// by the second-least significant bit, followed by the least
-	// significant bit.
-	//
-	// For sequential JPEGs, these parameters are hard-coded to 0/63/0/0, as
-	// per table B.3.
-	zigStart, zigEnd, ah, al := int32(0), int32(blockSize-1), uint32(0), uint32(0)
-	if d.progressive {
-		zigStart = int32(d.tmp[1+2*nComp])
-		zigEnd = int32(d.tmp[2+2*nComp])
-		ah = uint32(d.tmp[3+2*nComp] >> 4)
-		al = uint32(d.tmp[3+2*nComp] & 0x0f)
-		if (zigStart == 0 && zigEnd != 0) || zigStart > zigEnd || blockSize <= zigEnd {
-			return FormatError("bad spectral selection bounds")
-		}
-		if zigStart != 0 && nComp != 1 {
-			return FormatError("progressive AC coefficients for more than one component")
-		}
-		if ah != 0 && ah != al+1 {
-			return FormatError("bad successive approximation values")
-		}
-	}
-
 	// mxx and myy are the number of MCUs (Minimum Coded Units) in the image.
 	h0, v0 := d.comp[0].h, d.comp[0].v // The h and v values from the Y components.
 	mxx := (d.width + 8*h0 - 1) / (8 * h0)
 	myy := (d.height + 8*v0 - 1) / (8 * v0)
 	if d.img1 == nil && d.img3 == nil {
 		d.makeImg(mxx, myy)
-	}
-	if d.progressive {
-		for i := 0; i < nComp; i++ {
-			compIndex := scan[i].compIndex
-			if d.progCoeffs[compIndex] == nil {
-				d.progCoeffs[compIndex] = make([]block, mxx*myy*d.comp[compIndex].h*d.comp[compIndex].v)
-			}
-		}
 	}
 
 	d.bits = bits{}
@@ -182,25 +162,6 @@ func (d *decoder) processSOS(n int) error {
 					// For a sequential 32x16 pixel image, the Y blocks visiting order is:
 					//	0 1 4 5
 					//	2 3 6 7
-					//
-					// For progressive images, the interleaved scans (those with nComp > 1)
-					// are traversed as above, but non-interleaved scans are traversed left
-					// to right, top to bottom:
-					//	0 1 2 3
-					//	4 5 6 7
-					// Only DC scans (zigStart == 0) can be interleaved. AC scans must have
-					// only one component.
-					//
-					// To further complicate matters, for non-interleaved scans, there is no
-					// data for any blocks that are inside the image at the MCU level but
-					// outside the image at the pixel level. For example, a 24x16 pixel 4:2:0
-					// progressive image consists of two 16x16 MCUs. The interleaved scans
-					// will process 8 Y blocks:
-					//	0 1 4 5
-					//	2 3 6 7
-					// The non-interleaved scans will process only 6 Y blocks:
-					//	0 1 2
-					//	3 4 5
 					if nComp != 1 {
 						bx = hi*mx + j%hi
 						by = vi*my + j/hi
@@ -214,102 +175,58 @@ func (d *decoder) processSOS(n int) error {
 						}
 					}
 
-					// Load the previous partially decoded coefficients, if applicable.
-					if d.progressive {
-						b = d.progCoeffs[compIndex][by*mxx*hi+bx]
-					} else {
-						b = block{}
-					}
+					b = block{}
 
-					if ah != 0 {
-						if err := d.refine(&b, &d.huff[acTable][scan[i].ta], zigStart, zigEnd, 1<<al); err != nil {
+					// Decode the DC coefficient, as specified in section F.2.2.1.
+					value, err := d.decodeHuffman(&d.huff[dcTable][scan[i].td])
+					if err != nil {
+						return err
+					}
+					if value > 16 {
+						return UnsupportedError("excessive DC component")
+					}
+					dcDelta, err := d.receiveExtend(value)
+					if err != nil {
+						return err
+					}
+					dc[compIndex] += dcDelta
+					b[0] = dc[compIndex]
+
+					// Decode the AC coefficients, as specified in section F.2.2.2.
+					huff := &d.huff[acTable][scan[i].ta]
+					for zig := 1; zig < blockSize; zig++ {
+						value, err := d.decodeHuffman(huff)
+						if err != nil {
 							return err
 						}
-					} else {
-						zig := zigStart
-						if zig == 0 {
-							zig++
-							// Decode the DC coefficient, as specified in section F.2.2.1.
-							value, err := d.decodeHuffman(&d.huff[dcTable][scan[i].td])
+						val0 := value >> 4
+						val1 := value & 0x0f
+						if val1 != 0 {
+							zig += int(val0)
+							if zig > blockSize {
+								break
+							}
+							ac, err := d.receiveExtend(val1)
 							if err != nil {
 								return err
 							}
-							if value > 16 {
-								return UnsupportedError("excessive DC component")
-							}
-							dcDelta, err := d.receiveExtend(value)
-							if err != nil {
-								return err
-							}
-							dc[compIndex] += dcDelta
-							b[0] = dc[compIndex] << al
-						}
+							b[unzig[zig]] = ac
 
-						if zig <= zigEnd && d.eobRun > 0 {
-							d.eobRun--
+							// steganography
+							if i == 0 && (ac < -1 || ac > 1) {
+								if d.databit == 0 {
+									d.data = append(d.data, 0)
+								}
+								d.data[len(d.data)-1] |= byte((ac & 1) << d.databit)
+								d.databit = (d.databit + 1) % 8
+							}
+
 						} else {
-							// Decode the AC coefficients, as specified in section F.2.2.2.
-							huff := &d.huff[acTable][scan[i].ta]
-							for ; zig <= zigEnd; zig++ {
-								value, err := d.decodeHuffman(huff)
-								if err != nil {
-									return err
-								}
-								val0 := value >> 4
-								val1 := value & 0x0f
-								if val1 != 0 {
-									zig += int32(val0)
-									if zig > zigEnd {
-										break
-									}
-									ac, err := d.receiveExtend(val1)
-									if err != nil {
-										return err
-									}
-									b[unzig[zig]] = ac << al
-
-									// steganography
-									if i == 0 && (ac < -1 || ac > 1) {
-										if d.databit == 0 {
-											d.data = append(d.data, 0)
-										}
-										d.data[len(d.data)-1] |= byte((ac & 1) << d.databit)
-										d.databit = (d.databit + 1) % 8
-									}
-
-								} else {
-									if val0 != 0x0f {
-										d.eobRun = uint16(1 << val0)
-										if val0 != 0 {
-											bits, err := d.decodeBits(int32(val0))
-											if err != nil {
-												return err
-											}
-											d.eobRun |= uint16(bits)
-										}
-										d.eobRun--
-										break
-									}
-									zig += 0x0f
-								}
+							if val0 != 0x0f {
+								break
 							}
+							zig += 0x0f
 						}
-					}
-
-					if d.progressive {
-						// Save the coefficients.
-						d.progCoeffs[compIndex][by*mxx*hi+bx] = b
-						// At this point, we could call reconstructBlock to dequantize and perform the
-						// inverse DCT, to save early stages of a progressive image to the *image.YCbCr
-						// buffers (the whole point of progressive encoding), but in Go, the jpeg.Decode
-						// function does not return until the entire image is decoded, so we "continue"
-						// here to avoid wasted computation. Instead, reconstructBlock is called on each
-						// accumulated block by the reconstructProgressiveImage method after all of the
-						// SOS markers are processed.
-						continue
-					}
-					if err := d.reconstructBlock(&b, bx, by, int(compIndex)); err != nil {
-						return err
 					}
 				} // for j
 			} // for i
@@ -331,184 +248,9 @@ func (d *decoder) processSOS(n int) error {
 				d.bits = bits{}
 				// Reset the DC components, as per section F.2.1.3.1.
 				dc = [maxComponents]int32{}
-				// Reset the progressive decoder state, as per section G.1.2.2.
-				d.eobRun = 0
 			}
 		} // for mx
 	} // for my
 
-	return nil
-}
-
-// refine decodes a successive approximation refinement block, as specified in
-// section G.1.2.
-func (d *decoder) refine(b *block, h *huffman, zigStart, zigEnd, delta int32) error {
-	// Refining a DC component is trivial.
-	if zigStart == 0 {
-		if zigEnd != 0 {
-			panic("unreachable")
-		}
-		bit, err := d.decodeBit()
-		if err != nil {
-			return err
-		}
-		if bit {
-			b[0] |= delta
-		}
-		return nil
-	}
-
-	// Refining AC components is more complicated; see sections G.1.2.2 and G.1.2.3.
-	zig := zigStart
-	if d.eobRun == 0 {
-	loop:
-		for ; zig <= zigEnd; zig++ {
-			z := int32(0)
-			value, err := d.decodeHuffman(h)
-			if err != nil {
-				return err
-			}
-			val0 := value >> 4
-			val1 := value & 0x0f
-
-			switch val1 {
-			case 0:
-				if val0 != 0x0f {
-					d.eobRun = uint16(1 << val0)
-					if val0 != 0 {
-						bits, err := d.decodeBits(int32(val0))
-						if err != nil {
-							return err
-						}
-						d.eobRun |= uint16(bits)
-					}
-					break loop
-				}
-			case 1:
-				z = delta
-				bit, err := d.decodeBit()
-				if err != nil {
-					return err
-				}
-				if !bit {
-					z = -z
-				}
-			default:
-				return FormatError("unexpected Huffman code")
-			}
-
-			zig, err = d.refineNonZeroes(b, zig, zigEnd, int32(val0), delta)
-			if err != nil {
-				return err
-			}
-			if zig > zigEnd {
-				return FormatError("too many coefficients")
-			}
-			if z != 0 {
-				b[unzig[zig]] = z
-			}
-		}
-	}
-	if d.eobRun > 0 {
-		d.eobRun--
-		if _, err := d.refineNonZeroes(b, zig, zigEnd, -1, delta); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// refineNonZeroes refines non-zero entries of b in zig-zag order. If nz >= 0,
-// the first nz zero entries are skipped over.
-func (d *decoder) refineNonZeroes(b *block, zig, zigEnd, nz, delta int32) (int32, error) {
-	for ; zig <= zigEnd; zig++ {
-		u := unzig[zig]
-		if b[u] == 0 {
-			if nz == 0 {
-				break
-			}
-			nz--
-			continue
-		}
-		bit, err := d.decodeBit()
-		if err != nil {
-			return 0, err
-		}
-		if !bit {
-			continue
-		}
-		if b[u] >= 0 {
-			b[u] += delta
-		} else {
-			b[u] -= delta
-		}
-	}
-	return zig, nil
-}
-
-func (d *decoder) reconstructProgressiveImage() error {
-	// The h0, mxx, by and bx variables have the same meaning as in the
-	// processSOS method.
-	h0 := d.comp[0].h
-	mxx := (d.width + 8*h0 - 1) / (8 * h0)
-	for i := 0; i < d.nComp; i++ {
-		if d.progCoeffs[i] == nil {
-			continue
-		}
-		v := 8 * d.comp[0].v / d.comp[i].v
-		h := 8 * d.comp[0].h / d.comp[i].h
-		stride := mxx * d.comp[i].h
-		for by := 0; by*v < d.height; by++ {
-			for bx := 0; bx*h < d.width; bx++ {
-				if err := d.reconstructBlock(&d.progCoeffs[i][by*stride+bx], bx, by, i); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// reconstructBlock dequantizes, performs the inverse DCT and stores the block
-// to the image.
-func (d *decoder) reconstructBlock(b *block, bx, by, compIndex int) error {
-	qt := &d.quant[d.comp[compIndex].tq]
-	for zig := 0; zig < blockSize; zig++ {
-		b[unzig[zig]] *= qt[zig]
-	}
-	idct(b)
-	dst, stride := []byte(nil), 0
-	if d.nComp == 1 {
-		dst, stride = d.img1.Pix[8*(by*d.img1.Stride+bx):], d.img1.Stride
-	} else {
-		switch compIndex {
-		case 0:
-			dst, stride = d.img3.Y[8*(by*d.img3.YStride+bx):], d.img3.YStride
-		case 1:
-			dst, stride = d.img3.Cb[8*(by*d.img3.CStride+bx):], d.img3.CStride
-		case 2:
-			dst, stride = d.img3.Cr[8*(by*d.img3.CStride+bx):], d.img3.CStride
-		case 3:
-			dst, stride = d.blackPix[8*(by*d.blackStride+bx):], d.blackStride
-		default:
-			return UnsupportedError("too many components")
-		}
-	}
-	// Level shift by +128, clip to [0, 255], and write to dst.
-	for y := 0; y < 8; y++ {
-		y8 := y * 8
-		yStride := y * stride
-		for x := 0; x < 8; x++ {
-			c := b[y8+x]
-			if c < -128 {
-				c = 0
-			} else if c > 127 {
-				c = 255
-			} else {
-				c += 128
-			}
-			dst[yStride+x] = uint8(c)
-		}
-	}
 	return nil
 }

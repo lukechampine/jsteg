@@ -220,28 +220,3 @@ slowPath:
 	}
 	return 0, FormatError("bad Huffman code")
 }
-
-func (d *decoder) decodeBit() (bool, error) {
-	if d.bits.n == 0 {
-		if err := d.ensureNBits(1); err != nil {
-			return false, err
-		}
-	}
-	ret := d.bits.a&d.bits.m != 0
-	d.bits.n--
-	d.bits.m >>= 1
-	return ret, nil
-}
-
-func (d *decoder) decodeBits(n int32) (uint32, error) {
-	if d.bits.n < n {
-		if err := d.ensureNBits(n); err != nil {
-			return 0, err
-		}
-	}
-	ret := d.bits.a >> uint32(d.bits.n-n)
-	ret &= (1 << uint32(n)) - 1
-	d.bits.n -= n
-	d.bits.m >>= uint32(n)
-	return ret, nil
-}

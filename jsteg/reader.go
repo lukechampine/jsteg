@@ -9,7 +9,6 @@ package jsteg
 
 import (
 	"image"
-	"image/color"
 	"io"
 )
 
@@ -131,21 +130,18 @@ type decoder struct {
 	// As per section 4.5, there are four modes of operation (selected by the
 	// SOF? markers): sequential DCT, progressive DCT, lossless and
 	// hierarchical, although this implementation does not support the latter
-	// two non-DCT modes. Sequential DCT is further split into baseline and
+	// three non-DCT modes. Sequential DCT is further split into baseline and
 	// extended, as per section 4.11.
-	baseline    bool
-	progressive bool
+	baseline bool
 
 	jfif                bool
 	adobeTransformValid bool
 	adobeTransform      uint8
-	eobRun              uint16 // End-of-Band run, specified in section G.1.2.2.
 
-	comp       [maxComponents]component
-	progCoeffs [maxComponents][]block // Saved state between progressive-mode scans.
-	huff       [maxTc + 1][maxTh + 1]huffman
-	quant      [maxTq + 1]block // Quantization tables, in zig-zag order.
-	tmp        [2 * blockSize]byte
+	comp  [maxComponents]component
+	huff  [maxTc + 1][maxTh + 1]huffman
+	quant [maxTq + 1]block // Quantization tables, in zig-zag order.
+	tmp   [2 * blockSize]byte
 
 	// steganography
 	data     []byte
@@ -608,8 +604,10 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 
 		switch marker {
 		case sof0Marker, sof1Marker, sof2Marker:
+			if marker == sof2Marker {
+				return nil, UnsupportedError("progressive decoding")
+			}
 			d.baseline = marker == sof0Marker
-			d.progressive = marker == sof2Marker
 			err = d.processSOF(n)
 			if configOnly && d.jfif {
 				return nil, err
@@ -655,125 +653,13 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 		}
 	}
 
-	if d.progressive {
-		if err := d.reconstructProgressiveImage(); err != nil {
-			return nil, err
-		}
-	}
 	if d.img1 != nil {
 		return d.img1, nil
 	}
 	if d.img3 != nil {
-		if d.blackPix != nil {
-			return d.applyBlack()
-		} else if d.isRGB() {
-			return d.convertToRGB()
-		}
 		return d.img3, nil
 	}
 	return nil, FormatError("missing SOS marker")
-}
-
-// applyBlack combines d.img3 and d.blackPix into a CMYK image. The formula
-// used depends on whether the JPEG image is stored as CMYK or YCbCrK,
-// indicated by the APP14 (Adobe) metadata.
-//
-// Adobe CMYK JPEG images are inverted, where 255 means no ink instead of full
-// ink, so we apply "v = 255 - v" at various points. Note that a double
-// inversion is a no-op, so inversions might be implicit in the code below.
-func (d *decoder) applyBlack() (image.Image, error) {
-	if !d.adobeTransformValid {
-		return nil, UnsupportedError("unknown color model: 4-component JPEG doesn't have Adobe APP14 metadata")
-	}
-
-	// If the 4-component JPEG image isn't explicitly marked as "Unknown (RGB
-	// or CMYK)" as per
-	// http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/JPEG.html#Adobe
-	// we assume that it is YCbCrK. This matches libjpeg's jdapimin.c.
-	if d.adobeTransform != adobeTransformUnknown {
-		// Convert the YCbCr part of the YCbCrK to RGB, invert the RGB to get
-		// CMY, and patch in the original K. The RGB to CMY inversion cancels
-		// out the 'Adobe inversion' described in the applyBlack doc comment
-		// above, so in practice, only the fourth channel (black) is inverted.
-		bounds := d.img3.Bounds()
-		img := image.NewRGBA(bounds)
-		drawYCbCr(img, bounds, d.img3, bounds.Min)
-		for iBase, y := 0, bounds.Min.Y; y < bounds.Max.Y; iBase, y = iBase+img.Stride, y+1 {
-			for i, x := iBase+3, bounds.Min.X; x < bounds.Max.X; i, x = i+4, x+1 {
-				img.Pix[i] = 255 - d.blackPix[(y-bounds.Min.Y)*d.blackStride+(x-bounds.Min.X)]
-			}
-		}
-		return &image.CMYK{
-			Pix:    img.Pix,
-			Stride: img.Stride,
-			Rect:   img.Rect,
-		}, nil
-	}
-
-	// The first three channels (cyan, magenta, yellow) of the CMYK
-	// were decoded into d.img3, but each channel was decoded into a separate
-	// []byte slice, and some channels may be subsampled. We interleave the
-	// separate channels into an image.CMYK's single []byte slice containing 4
-	// contiguous bytes per pixel.
-	bounds := d.img3.Bounds()
-	img := image.NewCMYK(bounds)
-
-	translations := [4]struct {
-		src    []byte
-		stride int
-	}{
-		{d.img3.Y, d.img3.YStride},
-		{d.img3.Cb, d.img3.CStride},
-		{d.img3.Cr, d.img3.CStride},
-		{d.blackPix, d.blackStride},
-	}
-	for t, translation := range translations {
-		subsample := d.comp[t].h != d.comp[0].h || d.comp[t].v != d.comp[0].v
-		for iBase, y := 0, bounds.Min.Y; y < bounds.Max.Y; iBase, y = iBase+img.Stride, y+1 {
-			sy := y - bounds.Min.Y
-			if subsample {
-				sy /= 2
-			}
-			for i, x := iBase+t, bounds.Min.X; x < bounds.Max.X; i, x = i+4, x+1 {
-				sx := x - bounds.Min.X
-				if subsample {
-					sx /= 2
-				}
-				img.Pix[i] = 255 - translation.src[sy*translation.stride+sx]
-			}
-		}
-	}
-	return img, nil
-}
-
-func (d *decoder) isRGB() bool {
-	if d.jfif {
-		return false
-	}
-	if d.adobeTransformValid && d.adobeTransform == adobeTransformUnknown {
-		// http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/JPEG.html#Adobe
-		// says that 0 means Unknown (and in practice RGB) and 1 means YCbCr.
-		return true
-	}
-	return d.comp[0].c == 'R' && d.comp[1].c == 'G' && d.comp[2].c == 'B'
-}
-
-func (d *decoder) convertToRGB() (image.Image, error) {
-	cScale := d.comp[0].h / d.comp[1].h
-	bounds := d.img3.Bounds()
-	img := image.NewRGBA(bounds)
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		po := img.PixOffset(bounds.Min.X, y)
-		yo := d.img3.YOffset(bounds.Min.X, y)
-		co := d.img3.COffset(bounds.Min.X, y)
-		for i, iMax := 0, bounds.Max.X-bounds.Min.X; i < iMax; i++ {
-			img.Pix[po+4*i+0] = d.img3.Y[yo+i]
-			img.Pix[po+4*i+1] = d.img3.Cb[co+i/cScale]
-			img.Pix[po+4*i+2] = d.img3.Cr[co+i/cScale]
-			img.Pix[po+4*i+3] = 255
-		}
-	}
-	return img, nil
 }
 
 // Reveal reads a JPEG image from r and returns the accumulated LSBs of each
@@ -784,42 +670,4 @@ func Reveal(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return d.data, nil
-}
-
-// DecodeConfig returns the color model and dimensions of a JPEG image without
-// decoding the entire image.
-func DecodeConfig(r io.Reader) (image.Config, error) {
-	var d decoder
-	if _, err := d.decode(r, true); err != nil {
-		return image.Config{}, err
-	}
-	switch d.nComp {
-	case 1:
-		return image.Config{
-			ColorModel: color.GrayModel,
-			Width:      d.width,
-			Height:     d.height,
-		}, nil
-	case 3:
-		cm := color.YCbCrModel
-		if d.isRGB() {
-			cm = color.RGBAModel
-		}
-		return image.Config{
-			ColorModel: cm,
-			Width:      d.width,
-			Height:     d.height,
-		}, nil
-	case 4:
-		return image.Config{
-			ColorModel: color.CMYKModel,
-			Width:      d.width,
-			Height:     d.height,
-		}, nil
-	}
-	return image.Config{}, FormatError("missing SOF marker")
-}
-
-func init() {
-	image.RegisterFormat("jpeg", "\xff\xd8", Decode, DecodeConfig)
 }
