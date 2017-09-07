@@ -8,33 +8,43 @@ import (
 )
 
 func TestHideReveal(t *testing.T) {
-	// load test jpeg
-	f, err := os.Open("testdata/video-001.jpeg")
+	testdata, err := os.Open("testdata")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	img, err := jpeg.Decode(f)
+	names, err := testdata.Readdirnames(-1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range names {
+		// load test jpeg
+		f, err := os.Open("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		img, err := jpeg.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	// hide data in img
-	var buf bytes.Buffer
-	data := []byte("foo bar baz quux")
-	err = Hide(&buf, img, data, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+		// hide data in img
+		var buf bytes.Buffer
+		data := []byte("foo bar baz quux")
+		err = Hide(&buf, img, data, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	// reveal data
-	revealed, err := Reveal(&buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	revealed = revealed[:len(data)]
-	if !bytes.Equal(data, revealed) {
-		t.Fatal("revealed bytes do not match original")
+		// reveal data
+		revealed, err := Reveal(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revealed = revealed[:len(data)]
+		if !bytes.Equal(data, revealed) {
+			t.Fatal("revealed bytes do not match original")
+		}
 	}
 }
 
