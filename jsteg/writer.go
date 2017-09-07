@@ -591,6 +591,10 @@ type Options struct {
 	Quality int
 }
 
+// ErrTooSmall is returned if the image is too small to hold the requested
+// payload.
+var ErrTooSmall = errors.New("image is too small to hold the requested payload")
+
 // Hide writes the Image m to w in JPEG 4:2:0 baseline format with the given
 // options, hiding the bits of data in the LSB of each block. Default
 // parameters are used if a nil *Options is passed.
@@ -655,6 +659,9 @@ func Hide(w io.Writer, m image.Image, data []byte, o *Options) error {
 	e.writeDHT(nComponent)
 	// Write the image data.
 	e.writeSOS(m)
+	if len(e.data) > 0 {
+		return ErrTooSmall
+	}
 	// Write the End Of Image marker.
 	e.buf[0] = 0xff
 	e.buf[1] = 0xd9
