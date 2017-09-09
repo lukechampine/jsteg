@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package jpeg implements a JPEG image decoder and encoder.
-//
-// JPEG is defined in ITU-T T.81: http://www.w3.org/Graphics/JPEG/itu-t81.pdf.
+// Package jsteg implements JPEG steganography.
 package jsteg
 
 import (
