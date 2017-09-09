@@ -34,9 +34,13 @@ Note that the data is not demarcated in any way; the caller is responsible for
 determining which bytes of `hidden` it cares about. The easiest way to do this
 is to prepend the data with its length.
 
+A `jsteg` command is also included, providing a simple wrapper around the
+functions of this package. It can hide and reveal data in jpeg files and
+supports input/output redirection. It automatically handles length prefixes
+and uses a magic header to identify JPEGs that were produced by `jsteg`.
+
 ---
 
-A `jsteg` binary is also included, which hides and reveals data inside JPEGs.
-It automatically handles length prefixes and uses a magic header to identify
-JPEGs that were produced by `jsteg`.
-
+This package reuses a significant amount of code from the image/jpeg package.
+The BSD-style license that governs the use of that code can be found in the
+`go_LICENSE` file.
