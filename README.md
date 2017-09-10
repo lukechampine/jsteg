@@ -37,7 +37,7 @@ is to prepend the data with its length.
 A `jsteg` command is also included, providing a simple wrapper around the
 functions of this package. It can hide and reveal data in jpeg files and
 supports input/output redirection. It automatically handles length prefixes
-and uses a magic header to identify JPEGs that were produced by `jsteg`.
+and uses a magic header to identify jpegs that were produced by `jsteg`.
 
 ---
 
