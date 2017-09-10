@@ -136,7 +136,6 @@ type decoder struct {
 
 	// steganography
 	data     []byte
-	databyte byte
 	databit  uint
 }
 
