@@ -4,6 +4,8 @@
 
 package jsteg
 
+import "image/jpeg"
+
 const blockSize = 64 // A DCT block is 8x8.
 
 type block [blockSize]int32
@@ -11,17 +13,17 @@ type block [blockSize]int32
 // Specified in section B.2.3.
 func (d *decoder) processSOS(n int) error {
 	if d.nComp == 0 {
-		return FormatError("missing SOF marker")
+		return jpeg.FormatError("missing SOF marker")
 	}
 	if n < 6 || 4+2*d.nComp < n || n%2 != 0 {
-		return FormatError("SOS has wrong length")
+		return jpeg.FormatError("SOS has wrong length")
 	}
 	if err := d.readFull(d.tmp[:n]); err != nil {
 		return err
 	}
 	nComp := int(d.tmp[0])
 	if n != 4+2*nComp {
-		return FormatError("SOS length inconsistent with number of components")
+		return jpeg.FormatError("SOS length inconsistent with number of components")
 	}
 	var scan [maxComponents]struct {
 		compIndex uint8
@@ -38,7 +40,7 @@ func (d *decoder) processSOS(n int) error {
 			}
 		}
 		if compIndex < 0 {
-			return FormatError("unknown component selector")
+			return jpeg.FormatError("unknown component selector")
 		}
 		scan[i].compIndex = uint8(compIndex)
 		// Section B.2.3 states that "the value of Cs_j shall be different from
@@ -48,7 +50,7 @@ func (d *decoder) processSOS(n int) error {
 		// into d.comp are unique.
 		for j := 0; j < i; j++ {
 			if scan[i].compIndex == scan[j].compIndex {
-				return FormatError("repeated component selector")
+				return jpeg.FormatError("repeated component selector")
 			}
 		}
 		totalHV += d.comp[compIndex].h * d.comp[compIndex].v
@@ -56,17 +58,17 @@ func (d *decoder) processSOS(n int) error {
 		// The baseline t <= 1 restriction is specified in table B.3.
 		scan[i].td = d.tmp[2+2*i] >> 4
 		if t := scan[i].td; t > maxTh || (d.baseline && t > 1) {
-			return FormatError("bad Td value")
+			return jpeg.FormatError("bad Td value")
 		}
 		scan[i].ta = d.tmp[2+2*i] & 0x0f
 		if t := scan[i].ta; t > maxTh || (d.baseline && t > 1) {
-			return FormatError("bad Ta value")
+			return jpeg.FormatError("bad Ta value")
 		}
 	}
 	// Section B.2.3 states that if there is more than one component then the
 	// total H*V values in a scan must be <= 10.
 	if d.nComp > 1 && totalHV > 10 {
-		return FormatError("total sampling factors too large")
+		return jpeg.FormatError("total sampling factors too large")
 	}
 
 	// mxx and myy are the number of MCUs (Minimum Coded Units) in the image.
@@ -89,7 +91,7 @@ func (d *decoder) processSOS(n int) error {
 						return err
 					}
 					if value > 16 {
-						return UnsupportedError("excessive DC component")
+						return jpeg.UnsupportedError("excessive DC component")
 					}
 					if _, err = d.receiveExtend(value); err != nil {
 						return err
@@ -140,7 +142,7 @@ func (d *decoder) processSOS(n int) error {
 					return err
 				}
 				if d.tmp[0] != 0xff || d.tmp[1] != expectedRST {
-					return FormatError("bad RST marker")
+					return jpeg.FormatError("bad RST marker")
 				}
 				expectedRST++
 				if expectedRST == rst7Marker+1 {

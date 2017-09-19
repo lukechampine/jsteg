@@ -9,6 +9,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"io"
 )
 
@@ -582,15 +583,6 @@ func (e *encoder) writeSOS(m image.Image) {
 	e.emit(0x7f, 7)
 }
 
-// DefaultQuality is the default quality encoding parameter.
-const DefaultQuality = 75
-
-// Options are the encoding parameters.
-// Quality ranges from 1 to 100 inclusive, higher is better.
-type Options struct {
-	Quality int
-}
-
 // ErrTooSmall is returned if the image is too small to hold the requested
 // payload.
 var ErrTooSmall = errors.New("image is too small to hold the requested payload")
@@ -598,7 +590,7 @@ var ErrTooSmall = errors.New("image is too small to hold the requested payload")
 // Hide writes the Image m to w in JPEG 4:2:0 baseline format with the given
 // options, hiding the bits of data in the LSB of each block. Default
 // parameters are used if a nil *Options is passed.
-func Hide(w io.Writer, m image.Image, data []byte, o *Options) error {
+func Hide(w io.Writer, m image.Image, data []byte, o *jpeg.Options) error {
 	b := m.Bounds()
 	if b.Dx() >= 1<<16 || b.Dy() >= 1<<16 {
 		return errors.New("jpeg: image is too large to encode")
@@ -611,7 +603,7 @@ func Hide(w io.Writer, m image.Image, data []byte, o *Options) error {
 		e.w = bufio.NewWriter(w)
 	}
 	// Clip quality to [1, 100].
-	quality := DefaultQuality
+	quality := jpeg.DefaultQuality
 	if o != nil {
 		quality = o.Quality
 		if quality < 1 {

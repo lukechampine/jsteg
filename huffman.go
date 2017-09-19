@@ -5,6 +5,7 @@
 package jsteg
 
 import (
+	"image/jpeg"
 	"io"
 )
 
@@ -40,7 +41,7 @@ type huffman struct {
 
 // errShortHuffmanData means that an unexpected EOF occurred while decoding
 // Huffman data.
-var errShortHuffmanData = FormatError("short Huffman data")
+var errShortHuffmanData = jpeg.FormatError("short Huffman data")
 
 // ensureNBits reads bytes from the byte buffer to ensure that d.bits.n is at
 // least n. For best performance (avoiding function calls inside hot loops),
@@ -91,19 +92,19 @@ func (d *decoder) receiveExtend(t uint8) (int32, error) {
 func (d *decoder) processDHT(n int) error {
 	for n > 0 {
 		if n < 17 {
-			return FormatError("DHT has wrong length")
+			return jpeg.FormatError("DHT has wrong length")
 		}
 		if err := d.readFull(d.tmp[:17]); err != nil {
 			return err
 		}
 		tc := d.tmp[0] >> 4
 		if tc > maxTc {
-			return FormatError("bad Tc value")
+			return jpeg.FormatError("bad Tc value")
 		}
 		th := d.tmp[0] & 0x0f
 		// The baseline th <= 1 restriction is specified in table B.5.
 		if th > maxTh || (d.baseline && th > 1) {
-			return FormatError("bad Th value")
+			return jpeg.FormatError("bad Th value")
 		}
 		h := &d.huff[tc][th]
 
@@ -117,14 +118,14 @@ func (d *decoder) processDHT(n int) error {
 			h.nCodes += nCodes[i]
 		}
 		if h.nCodes == 0 {
-			return FormatError("Huffman table has zero length")
+			return jpeg.FormatError("Huffman table has zero length")
 		}
 		if h.nCodes > maxNCodes {
-			return FormatError("Huffman table has excessive length")
+			return jpeg.FormatError("Huffman table has excessive length")
 		}
 		n -= int(h.nCodes) + 17
 		if n < 0 {
-			return FormatError("DHT has wrong length")
+			return jpeg.FormatError("DHT has wrong length")
 		}
 		if err := d.readFull(h.vals[:h.nCodes]); err != nil {
 			return err
@@ -177,7 +178,7 @@ func (d *decoder) processDHT(n int) error {
 // decoded according to h.
 func (d *decoder) decodeHuffman(h *huffman) (uint8, error) {
 	if h.nCodes == 0 {
-		return 0, FormatError("uninitialized Huffman table")
+		return 0, jpeg.FormatError("uninitialized Huffman table")
 	}
 
 	if d.bits.n < 8 {
@@ -218,5 +219,5 @@ slowPath:
 		}
 		code <<= 1
 	}
-	return 0, FormatError("bad Huffman code")
+	return 0, jpeg.FormatError("bad Huffman code")
 }

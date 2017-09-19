@@ -7,23 +7,11 @@ package jsteg
 
 import (
 	"image"
+	"image/jpeg"
 	"io"
 )
 
-// TODO(nigeltao): fix up the doc comment style so that sentences start with
-// the name of the type or function that they annotate.
-
-// A FormatError reports that the input is not a valid JPEG.
-type FormatError string
-
-func (e FormatError) Error() string { return "invalid JPEG format: " + string(e) }
-
-// An UnsupportedError reports that the input uses a valid but unimplemented JPEG feature.
-type UnsupportedError string
-
-func (e UnsupportedError) Error() string { return "unsupported JPEG feature: " + string(e) }
-
-var errUnsupportedSubsamplingRatio = UnsupportedError("luma/chroma subsampling ratio")
+var errUnsupportedSubsamplingRatio = jpeg.UnsupportedError("luma/chroma subsampling ratio")
 
 // Component specification, specified in section B.2.2.
 type component struct {
@@ -78,12 +66,6 @@ var unzig = [blockSize]int{
 	53, 60, 61, 54, 47, 55, 62, 63,
 }
 
-// Deprecated: Reader is deprecated.
-type Reader interface {
-	io.ByteReader
-	io.Reader
-}
-
 // bits holds the unprocessed bits that have been taken from the byte-stream.
 // The n least significant bits of a form the unread bits, to be read in MSB to
 // LSB order.
@@ -135,8 +117,8 @@ type decoder struct {
 	tmp   [2 * blockSize]byte
 
 	// steganography
-	data     []byte
-	databit  uint
+	data    []byte
+	databit uint
 }
 
 // fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
@@ -192,7 +174,7 @@ func (d *decoder) readByte() (x byte, err error) {
 
 // errMissingFF00 means that readByteStuffedByte encountered an 0xff byte (a
 // marker byte) that wasn't the expected byte-stuffed sequence 0xff, 0x00.
-var errMissingFF00 = FormatError("missing 0xff00 sequence")
+var errMissingFF00 = jpeg.FormatError("missing 0xff00 sequence")
 
 // readByteStuffedByte is like readByte but is for byte-stuffed Huffman data.
 func (d *decoder) readByteStuffedByte() (x byte, err error) {
@@ -295,7 +277,7 @@ func (d *decoder) ignore(n int) error {
 // Specified in section B.2.2.
 func (d *decoder) processSOF(n int) error {
 	if d.nComp != 0 {
-		return FormatError("multiple SOF markers")
+		return jpeg.FormatError("multiple SOF markers")
 	}
 	switch n {
 	case 6 + 3*1: // Grayscale image.
@@ -305,19 +287,19 @@ func (d *decoder) processSOF(n int) error {
 	case 6 + 3*4: // YCbCrK or CMYK image.
 		d.nComp = 4
 	default:
-		return UnsupportedError("number of components")
+		return jpeg.UnsupportedError("number of components")
 	}
 	if err := d.readFull(d.tmp[:n]); err != nil {
 		return err
 	}
 	// We only support 8-bit precision.
 	if d.tmp[0] != 8 {
-		return UnsupportedError("precision")
+		return jpeg.UnsupportedError("precision")
 	}
 	d.height = int(d.tmp[1])<<8 + int(d.tmp[2])
 	d.width = int(d.tmp[3])<<8 + int(d.tmp[4])
 	if int(d.tmp[5]) != d.nComp {
-		return FormatError("SOF has wrong length")
+		return jpeg.FormatError("SOF has wrong length")
 	}
 
 	for i := 0; i < d.nComp; i++ {
@@ -326,19 +308,19 @@ func (d *decoder) processSOF(n int) error {
 		// the values of C_1 through C_(i-1)".
 		for j := 0; j < i; j++ {
 			if d.comp[i].c == d.comp[j].c {
-				return FormatError("repeated component identifier")
+				return jpeg.FormatError("repeated component identifier")
 			}
 		}
 
 		d.comp[i].tq = d.tmp[8+3*i]
 		if d.comp[i].tq > maxTq {
-			return FormatError("bad Tq value")
+			return jpeg.FormatError("bad Tq value")
 		}
 
 		hv := d.tmp[7+3*i]
 		h, v := int(hv>>4), int(hv&0x0f)
 		if h < 1 || 4 < h || v < 1 || 4 < v {
-			return FormatError("luma/chroma subsampling ratio")
+			return jpeg.FormatError("luma/chroma subsampling ratio")
 		}
 		if h == 3 || v == 3 {
 			return errUnsupportedSubsamplingRatio
@@ -427,11 +409,11 @@ loop:
 		}
 		tq := x & 0x0f
 		if tq > maxTq {
-			return FormatError("bad Tq value")
+			return jpeg.FormatError("bad Tq value")
 		}
 		switch x >> 4 {
 		default:
-			return FormatError("bad Pq value")
+			return jpeg.FormatError("bad Pq value")
 		case 0:
 			if n < blockSize {
 				break loop
@@ -457,7 +439,7 @@ loop:
 		}
 	}
 	if n != 0 {
-		return FormatError("DQT has wrong length")
+		return jpeg.FormatError("DQT has wrong length")
 	}
 	return nil
 }
@@ -465,7 +447,7 @@ loop:
 // Specified in section B.2.4.4.
 func (d *decoder) processDRI(n int) error {
 	if n != 2 {
-		return FormatError("DRI has wrong length")
+		return jpeg.FormatError("DRI has wrong length")
 	}
 	if err := d.readFull(d.tmp[:2]); err != nil {
 		return err
@@ -521,7 +503,7 @@ func (d *decoder) decode(r io.Reader, configOnly bool) ([]byte, error) {
 		return nil, err
 	}
 	if d.tmp[0] != 0xff || d.tmp[1] != soiMarker {
-		return nil, FormatError("missing SOI marker")
+		return nil, jpeg.FormatError("missing SOI marker")
 	}
 
 	// Process the remaining segments until the End Of Image marker.
@@ -590,13 +572,13 @@ func (d *decoder) decode(r io.Reader, configOnly bool) ([]byte, error) {
 		}
 		n := int(d.tmp[0])<<8 + int(d.tmp[1]) - 2
 		if n < 0 {
-			return nil, FormatError("short segment length")
+			return nil, jpeg.FormatError("short segment length")
 		}
 
 		switch marker {
 		case sof0Marker, sof1Marker, sof2Marker:
 			if marker == sof2Marker {
-				return nil, UnsupportedError("progressive decoding")
+				return nil, jpeg.UnsupportedError("progressive decoding")
 			}
 			d.baseline = marker == sof0Marker
 			err = d.processSOF(n)
@@ -634,9 +616,9 @@ func (d *decoder) decode(r io.Reader, configOnly bool) ([]byte, error) {
 			if app0Marker <= marker && marker <= app15Marker || marker == comMarker {
 				err = d.ignore(n)
 			} else if marker < 0xc0 { // See Table B.1 "Marker code assignments".
-				err = FormatError("unknown marker")
+				err = jpeg.FormatError("unknown marker")
 			} else {
-				err = UnsupportedError("unknown marker")
+				err = jpeg.UnsupportedError("unknown marker")
 			}
 		}
 		if err != nil {

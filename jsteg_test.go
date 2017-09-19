@@ -97,7 +97,7 @@ func TestRevealProgressive(t *testing.T) {
 		defer f.Close()
 
 		_, err = Reveal(f)
-		if _, ok := err.(UnsupportedError); !ok {
+		if _, ok := err.(jpeg.UnsupportedError); !ok {
 			t.Fatal("expected UnsupportedError, got", err)
 		}
 	}
