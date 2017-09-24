@@ -34,11 +34,17 @@ Note that the data is not demarcated in any way; the caller is responsible for
 determining which bytes of `hidden` it cares about. The easiest way to do this
 is to prepend the data with its length.
 
-A `jsteg` command is also included, providing a simple wrapper around the
+A `jsteg` command is included, providing a simple wrapper around the
 functions of this package. It can hide and reveal data in jpeg files and
 supports input/output redirection. It automatically handles length prefixes
 and uses a magic header to identify jpegs that were produced by `jsteg`.
-Binaries can be found [here](https://github.com/lukechampine/jsteg/releases).
+
+A more narrowly-focused command named `slink` is also included. `slink` embeds
+a public key in an jpeg, and makes it easy to sign data and verify signatures
+using keypairs derived from password strings. See [cmd/slink](cmd/slink) for a
+full description.
+
+Binaries for both commands can be found [here](https://github.com/lukechampine/jsteg/releases).
 
 ---
 
