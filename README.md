@@ -40,7 +40,7 @@ supports input/output redirection. It automatically handles length prefixes
 and uses a magic header to identify jpegs that were produced by `jsteg`.
 
 A more narrowly-focused command named `slink` is also included. `slink` embeds
-a public key in an jpeg, and makes it easy to sign data and verify signatures
+a public key in a jpeg, and makes it easy to sign data and verify signatures
 using keypairs derived from password strings. See [cmd/slink](cmd/slink) for a
 full description.
 
