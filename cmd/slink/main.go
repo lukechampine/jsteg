@@ -12,13 +12,22 @@ import (
 
 	"golang.org/x/crypto/ed25519"
 
+	"github.com/lukechampine/flagg"
 	"github.com/lukechampine/jsteg"
 )
 
 const magic = "slink"
 
-func usage() {
-	log.Fatalf(`Usage: %s [command] [args]
+func keypair(password string) (ed25519.PublicKey, ed25519.PrivateKey) {
+	h := sha256.Sum256([]byte(password))
+	pk, sk, _ := ed25519.GenerateKey(bytes.NewReader(h[:]))
+	return pk, sk
+}
+
+func main() {
+	log.SetFlags(0)
+
+	flagg.Root.Usage = flagg.SimpleUsage(flagg.Root, `Usage: slink [command] [args]
 
 Commands:
     claim img.jpg password            Embed a public key
@@ -29,34 +38,36 @@ Use claim to embed your public key in an image. Later, you can
 use prove to demonstrate that you control the private key paired
 with the public key. Use verify to verify that a signature was
 generated from the same keypair embedded in the image.
-`, os.Args[0])
-}
+`)
+	cmdClaim := flagg.New("claim", `Usage:
+    slink claim img.jpg password
+      Embed a public key (derived from password) in img.jpg
+`)
+	cmdProve := flagg.New("prove", `Usage:
+    slink prove data password
+      Sign arbitrary data using the private key derived from password
+`)
+	cmdVerify := flagg.New("verify", `Usage:
+    slink verify img.jpg data signature
+      Verify that data was signed by the same key embedded in img.jpg
+`)
+	cmd := flagg.Parse(flagg.Tree{
+		Cmd: flagg.Root,
+		Sub: []flagg.Tree{
+			{Cmd: cmdClaim},
+			{Cmd: cmdProve},
+			{Cmd: cmdVerify},
+		},
+	})
 
-func requireArgs(n int) {
-	if len(os.Args[2:]) != n {
-		usage()
-	}
-}
+	switch cmd {
+	case cmdClaim:
+		if cmd.NArg() != 2 {
+			cmd.Usage()
+			return
+		}
 
-func keypair(password string) (ed25519.PublicKey, ed25519.PrivateKey) {
-	h := sha256.Sum256([]byte(password))
-	pk, sk, _ := ed25519.GenerateKey(bytes.NewReader(h[:]))
-	return pk, sk
-}
-
-func main() {
-	log.SetFlags(0)
-	if len(os.Args) < 2 {
-		usage()
-	}
-	switch os.Args[1] {
-	default:
-		usage()
-
-	case "claim":
-		requireArgs(2)
-
-		infile, err := os.Open(os.Args[2])
+		infile, err := os.Open(cmd.Arg(0))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -66,7 +77,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		outPath := strings.TrimSuffix(os.Args[2], filepath.Ext(os.Args[2])) + ".claimed.jpg"
+		outPath := strings.TrimSuffix(cmd.Arg(0), filepath.Ext(cmd.Arg(0))) + ".claimed.jpg"
 		outfile, err := os.Create(outPath)
 		if err != nil {
 			log.Fatal(err)
@@ -75,7 +86,7 @@ func main() {
 
 		data := make([]byte, len(magic)+ed25519.PublicKeySize)
 		copy(data, magic)
-		pk, _ := keypair(os.Args[3])
+		pk, _ := keypair(cmd.Arg(1))
 		copy(data[len(magic):], pk[:])
 
 		err = jsteg.Hide(outfile, img, data, nil)
@@ -84,17 +95,23 @@ func main() {
 		}
 		os.Stdout.WriteString("Wrote claimed jpeg to " + outPath + "\n")
 
-	case "prove":
-		requireArgs(2)
+	case cmdProve:
+		if cmd.NArg() != 2 {
+			cmd.Usage()
+			return
+		}
 
-		_, sk := keypair(os.Args[3])
-		sig := ed25519.Sign(sk, []byte(os.Args[2]))
+		_, sk := keypair(cmd.Arg(1))
+		sig := ed25519.Sign(sk, []byte(cmd.Arg(0)))
 		os.Stdout.WriteString(base64.StdEncoding.EncodeToString(sig) + "\n")
 
-	case "verify":
-		requireArgs(3)
+	case cmdVerify:
+		if cmd.NArg() != 3 {
+			cmd.Usage()
+			return
+		}
 
-		infile, err := os.Open(os.Args[2])
+		infile, err := os.Open(cmd.Arg(0))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -108,14 +125,17 @@ func main() {
 			log.Fatal("Image was not signed with slink")
 		}
 		pk := ed25519.PublicKey(data[len(magic):][:ed25519.PublicKeySize])
-		sig, err := base64.StdEncoding.DecodeString(os.Args[4])
+		sig, err := base64.StdEncoding.DecodeString(cmd.Arg(2))
 		if err != nil {
 			log.Fatal("Invalid signature")
 		}
-		if ed25519.Verify(pk, []byte(os.Args[3]), sig) {
+		if ed25519.Verify(pk, []byte(cmd.Arg(1)), sig) {
 			log.Println("Verified OK")
 		} else {
 			log.Fatal("Bad signature")
 		}
+
+	default:
+		flagg.Root.Usage()
 	}
 }
