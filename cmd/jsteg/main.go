@@ -8,50 +8,62 @@ import (
 	"log"
 	"os"
 
+	"github.com/lukechampine/flagg"
+
 	"github.com/lukechampine/jsteg"
 )
-
-func usage() {
-	log.Fatalf(`Usage:
-    %[1]s hide in.jpg [FILE] [out.jpg]
-      Hide FILE (or stdin) in in.jpg, writing the result to out.jpg (or stdout)
-    %[1]s reveal in.jpg [FILE]
-      Write the hidden contents of in.jpg to FILE (or stdout)
-`, os.Args[0])
-}
 
 const magic = "jsteg"
 
 func main() {
 	log.SetFlags(0)
-	if len(os.Args) < 2 {
-		usage()
-	}
 
-	switch os.Args[1] {
-	case "hide":
+	flagg.Root.Usage = flagg.SimpleUsage(flagg.Root, `Usage: jsteg [command] [args]
+
+Commands:
+    jsteg hide in.jpg [FILE] [out.jpg]
+    jsteg reveal in.jpg [FILE]
+`)
+	cmdHide := flagg.New("hide", `Usage:
+    jsteg hide in.jpg [FILE] [out.jpg]
+      Hide FILE (or stdin) in in.jpg, writing the result to out.jpg (or stdout)
+`)
+	cmdReveal := flagg.New("reveal", `Usage:
+    jsteg reveal in.jpg [FILE]
+      Write the hidden contents of in.jpg to FILE (or stdout)
+`)
+	cmd := flagg.Parse(flagg.Tree{
+		Cmd: flagg.Root,
+		Sub: []flagg.Tree{
+			{Cmd: cmdHide},
+			{Cmd: cmdReveal},
+		},
+	})
+
+	switch cmd {
+	case cmdHide:
 		var in io.Reader
 		var out io.Writer
-		switch len(os.Args) {
+		switch cmd.NArg() {
 		// stdin and stdout
-		case 3:
+		case 1:
 			in, out = os.Stdin, os.Stdout
 
 		// either stdin and outfile or infile and stdout
-		case 4:
+		case 2:
 			// detect whether we have stdin
 			// (not perfect; doesn't work with e.g. /dev/zero)
 			stat, _ := os.Stdin.Stat()
 			haveStdin := (stat.Mode() & os.ModeCharDevice) == 0
 			if haveStdin {
-				fout, err := os.Create(os.Args[3])
+				fout, err := os.Create(cmd.Arg(1))
 				if err != nil {
 					log.Fatal("could not create output file:", err)
 				}
 				defer fout.Close()
 				in, out = os.Stdin, fout
 			} else {
-				fin, err := os.Open(os.Args[3])
+				fin, err := os.Open(cmd.Arg(1))
 				if err != nil {
 					log.Fatal("could not open file:", err)
 				}
@@ -60,13 +72,13 @@ func main() {
 			}
 
 		// infile and outfile
-		case 5:
-			fin, err := os.Open(os.Args[3])
+		case 3:
+			fin, err := os.Open(cmd.Arg(1))
 			if err != nil {
 				log.Fatal("could not open file:", err)
 			}
 			defer fin.Close()
-			fout, err := os.Create(os.Args[4])
+			fout, err := os.Create(cmd.Arg(2))
 			if err != nil {
 				log.Fatal("could not create output file:", err)
 			}
@@ -74,10 +86,11 @@ func main() {
 			in, out = fin, fout
 
 		default:
-			usage()
+			cmdHide.Usage()
+			return
 		}
 
-		injpg, err := os.Open(os.Args[2])
+		injpg, err := os.Open(cmd.Arg(0))
 		if err != nil {
 			log.Fatal("could not open jpeg:", err)
 		}
@@ -101,16 +114,16 @@ func main() {
 			log.Fatal("could not write output file:", err)
 		}
 
-	case "reveal":
+	case cmdReveal:
 		var out io.Writer
-		switch len(os.Args) {
+		switch cmd.NArg() {
 		// stdout
-		case 3:
+		case 1:
 			out = os.Stdout
 
 		// outfile
-		case 4:
-			fout, err := os.Create(os.Args[3])
+		case 2:
+			fout, err := os.Create(cmd.Arg(1))
 			if err != nil {
 				log.Fatal("could not create output file:", err)
 			}
@@ -118,10 +131,11 @@ func main() {
 			out = fout
 
 		default:
-			usage()
+			cmdReveal.Usage()
+			return
 		}
 
-		injpg, err := os.Open(os.Args[2])
+		injpg, err := os.Open(cmd.Arg(0))
 		if err != nil {
 			log.Fatal("could not open file:", err)
 		}
@@ -145,6 +159,6 @@ func main() {
 		}
 
 	default:
-		usage()
+		flagg.Root.Usage()
 	}
 }
