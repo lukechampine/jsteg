@@ -58,14 +58,14 @@ Commands:
 			if haveStdin {
 				fout, err := os.Create(cmd.Arg(1))
 				if err != nil {
-					log.Fatal("could not create output file:", err)
+					log.Fatalln("could not create output file:", err)
 				}
 				defer fout.Close()
 				in, out = os.Stdin, fout
 			} else {
 				fin, err := os.Open(cmd.Arg(1))
 				if err != nil {
-					log.Fatal("could not open file:", err)
+					log.Fatalln("could not open file:", err)
 				}
 				defer fin.Close()
 				in, out = fin, os.Stdout
@@ -75,12 +75,12 @@ Commands:
 		case 3:
 			fin, err := os.Open(cmd.Arg(1))
 			if err != nil {
-				log.Fatal("could not open file:", err)
+				log.Fatalln("could not open file:", err)
 			}
 			defer fin.Close()
 			fout, err := os.Create(cmd.Arg(2))
 			if err != nil {
-				log.Fatal("could not create output file:", err)
+				log.Fatalln("could not create output file:", err)
 			}
 			defer fout.Close()
 			in, out = fin, fout
@@ -92,16 +92,16 @@ Commands:
 
 		injpg, err := os.Open(cmd.Arg(0))
 		if err != nil {
-			log.Fatal("could not open jpeg:", err)
+			log.Fatalln("could not open jpeg:", err)
 		}
 		img, err := jpeg.Decode(injpg)
 		if err != nil {
-			log.Fatal("could not decode jpeg:", err)
+			log.Fatalln("could not decode jpeg:", err)
 		}
 
 		text, err := ioutil.ReadAll(in)
 		if err != nil {
-			log.Fatal("could not read input:", err)
+			log.Fatalln("could not read input:", err)
 		}
 
 		data := make([]byte, 9+len(text))
@@ -111,7 +111,7 @@ Commands:
 
 		err = jsteg.Hide(out, img, data, nil)
 		if err != nil {
-			log.Fatal("could not write output file:", err)
+			log.Fatalln("could not write output file:", err)
 		}
 
 	case cmdReveal:
@@ -125,7 +125,7 @@ Commands:
 		case 2:
 			fout, err := os.Create(cmd.Arg(1))
 			if err != nil {
-				log.Fatal("could not create output file:", err)
+				log.Fatalln("could not create output file:", err)
 			}
 			defer fout.Close()
 			out = fout
@@ -137,25 +137,25 @@ Commands:
 
 		injpg, err := os.Open(cmd.Arg(0))
 		if err != nil {
-			log.Fatal("could not open file:", err)
+			log.Fatalln("could not open file:", err)
 		}
 		defer injpg.Close()
 
 		data, err := jsteg.Reveal(injpg)
 		if err != nil {
-			log.Fatal("could not decode jpeg:", err)
+			log.Fatalln("could not decode jpeg:", err)
 		}
 		if len(data) < 5 || string(data[:5]) != magic {
-			log.Fatal("jpeg does not contain hidden data")
+			log.Fatalln("jpeg does not contain hidden data")
 		}
 		n := binary.LittleEndian.Uint32(data[5:9])
 		if n > uint32(len(data)) {
-			log.Fatal("hidden data is malformed")
+			log.Fatalln("hidden data is malformed")
 		}
 
 		text := data[9:][:n]
 		if _, err := out.Write(text); err != nil {
-			log.Fatal("could not write hidden data:", err)
+			log.Fatalln("could not write hidden data:", err)
 		}
 
 	default:
