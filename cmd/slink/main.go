@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ed25519"
+	"lukechampine.com/flagg"
 
-	"github.com/lukechampine/flagg"
 	"github.com/lukechampine/jsteg"
 )
 

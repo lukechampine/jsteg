@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/lukechampine/flagg"
+	"lukechampine.com/flagg"
 
 	"github.com/lukechampine/jsteg"
 )
