@@ -1,4 +1,4 @@
-module github.com/lukechampine/jsteg
+module lukechampine.com/jsteg
 
 go 1.12
 

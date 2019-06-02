@@ -9,8 +9,7 @@ import (
 	"os"
 
 	"lukechampine.com/flagg"
-
-	"github.com/lukechampine/jsteg"
+	"lukechampine.com/jsteg"
 )
 
 const magic = "jsteg"

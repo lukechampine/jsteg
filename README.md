@@ -1,11 +1,11 @@
 jsteg
 -----
 
-[![GoDoc](https://godoc.org/github.com/lukechampine/jsteg?status.svg)](https://godoc.org/github.com/lukechampine/jsteg)
-[![Go Report Card](http://goreportcard.com/badge/github.com/lukechampine/jsteg)](https://goreportcard.com/report/github.com/lukechampine/jsteg)
+[![GoDoc](https://godoc.org/lukechampine.com/jsteg?status.svg)](https://godoc.org/lukechampine.com/jsteg)
+[![Go Report Card](http://goreportcard.com/badge/lukechampine.com/jsteg)](https://goreportcard.com/report/lukechampine.com/jsteg)
 
 ```
-go get github.com/lukechampine/jsteg
+go get lukechampine.com/jsteg
 ```
 
 `jsteg` is a package for hiding data inside jpeg files, a technique known as

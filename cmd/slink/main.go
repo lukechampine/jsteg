@@ -12,8 +12,7 @@ import (
 
 	"golang.org/x/crypto/ed25519"
 	"lukechampine.com/flagg"
-
-	"github.com/lukechampine/jsteg"
+	"lukechampine.com/jsteg"
 )
 
 const magic = "slink"
