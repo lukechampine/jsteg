@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"image/jpeg"
@@ -10,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/crypto/ed25519"
 	"lukechampine.com/flagg"
 	"lukechampine.com/jsteg"
 )
