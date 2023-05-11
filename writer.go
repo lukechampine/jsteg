@@ -545,7 +545,6 @@ func (e *encoder) writeSOS(m image.Image) {
 	)
 	bounds := m.Bounds()
 	switch m := m.(type) {
-	// TODO(wathiede): switch on m.ColorModel() instead of type.
 	case *image.Gray:
 		for y := bounds.Min.Y; y < bounds.Max.Y; y += 8 {
 			for x := bounds.Min.X; x < bounds.Max.X; x += 8 {
@@ -581,6 +580,92 @@ func (e *encoder) writeSOS(m image.Image) {
 	}
 	// Pad the last byte with 1's.
 	e.emit(0x7f, 7)
+}
+
+// Capacity returns the number of bytes that can be hidden in m. Default
+// parameters are used if a nil *Options is passed.
+func Capacity(m image.Image, o *jpeg.Options) int {
+	bounds := m.Bounds()
+	if bounds.Dx() >= 1<<16 || bounds.Dy() >= 1<<16 {
+		return 0
+	}
+	quality := jpeg.DefaultQuality
+	if o != nil {
+		quality = o.Quality
+		if quality < 1 {
+			quality = 1
+		} else if quality > 100 {
+			quality = 100
+		}
+	}
+	var sf int
+	if quality < 50 {
+		sf = 5000 / quality
+	} else {
+		sf = 200 - quality*2
+	}
+	var lumQuant [blockSize]byte
+	for i := range lumQuant {
+		x := int(unscaledQuant[0][i])
+		x = (x*sf + 50) / 100
+		if x < 1 {
+			x = 1
+		} else if x > 255 {
+			x = 255
+		}
+		lumQuant[i] = uint8(x)
+	}
+
+	stegBits := func(b *block) (n int) {
+		for zig := 1; zig < blockSize; zig++ {
+			if ac := div(b[unzig[zig]], 8*int32(lumQuant[zig])); ac < -1 || ac > 1 {
+				n++
+			}
+		}
+		return
+	}
+
+	var numBits int
+	var b block
+	var cb, cr [4]block
+	switch m := m.(type) {
+	case *image.Gray:
+		for y := bounds.Min.Y; y < bounds.Max.Y; y += 8 {
+			for x := bounds.Min.X; x < bounds.Max.X; x += 8 {
+				p := image.Pt(x, y)
+				grayToY(m, p, &b)
+				fdct(&b)
+				numBits += stegBits(&b)
+			}
+		}
+	default:
+		rgba, _ := m.(*image.RGBA)
+		ycbcr, _ := m.(*image.YCbCr)
+		for y := bounds.Min.Y; y < bounds.Max.Y; y += 16 {
+			for x := bounds.Min.X; x < bounds.Max.X; x += 16 {
+				for i := 0; i < 4; i++ {
+					xOff := (i & 1) * 8
+					yOff := (i & 2) * 4
+					p := image.Pt(x+xOff, y+yOff)
+					if rgba != nil {
+						rgbaToYCbCr(rgba, p, &b, &cb[i], &cr[i])
+					} else if ycbcr != nil {
+						yCbCrToYCbCr(ycbcr, p, &b, &cb[i], &cr[i])
+					} else {
+						toYCbCr(m, p, &b, &cb[i], &cr[i])
+					}
+					fdct(&b)
+					numBits += stegBits(&b)
+				}
+				scale(&b, &cb)
+				fdct(&b)
+				scale(&b, &cr)
+				fdct(&b)
+			}
+		}
+	}
+
+	return numBits / 8
 }
 
 // ErrTooSmall is returned if the image is too small to hold the requested
@@ -635,7 +720,6 @@ func Hide(w io.Writer, m image.Image, data []byte, o *jpeg.Options) error {
 	// Compute number of components based on input image type.
 	nComponent := 3
 	switch m.(type) {
-	// TODO(wathiede): switch on m.ColorModel() instead of type.
 	case *image.Gray:
 		nComponent = 1
 	}
